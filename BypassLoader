@@ -1,10 +1,20 @@
-
 -- Universal Anti-Cheat Bypass Loader
 -- This script demonstrates how to use the universal bypass
 
--- GitHub repository information
+-- GitHub repository if bypassContent then
+    print("[BYPASS] Found Uni-Bypass.lua file, attempting to load...")
+
+    -- First try to compile the file
+    local compileSuccess, compiledCode = pcall(function()
+        return loadstring(bypassContent)
+    end)
+
+    if not compileSuccess then
+        warn("[BYPASS] Failed to compile Uni-Bypass.lua: " .. tostring(compiledCode))
+        warn("[BYPASS] This may indicate a syntax error in the file.")
+        warn("[BYPASS] Creating fallback bypass module...")
 local githubInfo = {
-    username = "Rephra",
+    username = "Securedlinks",
     repository = "Bypass.com",
     branch = "main"
 }
@@ -12,17 +22,17 @@ local githubInfo = {
 -- Alternative GitHub sources (fallbacks)
 local alternativeGithubSources = {
     {
-        username = "Rephra",
+        username = "Securedlinks",
         repository = "Bypass.com",
         branch = "main"
     },
     {
-        username = "Rephra",
+        username = "Securedlinks",
         repository = "Bypass-Mirror",
         branch = "main"
     },
     {
-        username = "Rephra",
+        username = "Securedlinks",
         repository = "Bypass-Backup",
         branch = "master"
     }
@@ -118,8 +128,8 @@ local function tryReadFile(paths)
 end
 
 -- Skip trying to find local files and load directly from GitHub
-print("[BYPASS] Loading UniversalBypass directly from GitHub...")
-local bypassContent = fetchFromGithub("UniversalBypass")
+print("[BYPASS] Loading Uni-Bypass directly from GitHub...")
+local bypassContent = fetchFromGithub("Uni-Bypass")
 local success, bypass = false, nil
 
 if bypassContent then
@@ -212,13 +222,13 @@ else
     return
 end
 
--- Skip trying to find local files and load UltimateKiller directly from GitHub
-print("[BYPASS] Loading UltimateKiller directly from GitHub...")
-local killerContent = fetchFromGithub("UltimateKiller")
+-- Skip trying to find local files and load Ult-Killer directly from GitHub
+print("[BYPASS] Loading Ult-Killer directly from GitHub...")
+local killerContent = fetchFromGithub("Ult-Killer")
 local killerSuccess, ultimateKiller = false, nil
 
 if killerContent then
-    print("[BYPASS] Found UltimateKiller.lua file, attempting to load...")
+    print("[BYPASS] Found Ult-Killer.lua file, attempting to load...")
 
     -- First try to compile the file with safety measures
     local compileSuccess, compiledCode = pcall(function()
@@ -226,13 +236,13 @@ if killerContent then
     end)
 
     if not compileSuccess then
-        print("[BYPASS] Failed to compile UltimateKiller.lua: " .. tostring(compiledCode))
-        print("[BYPASS] Creating fallback UltimateKiller module...")
+        print("[BYPASS] Failed to compile Ult-Killer.lua: " .. tostring(compiledCode))
+        print("[BYPASS] Creating fallback Ult-Killer module...")
 
         -- Create a fallback module
         ultimateKiller = {
             enable = function() 
-                print("[BYPASS] Fallback UltimateKiller enabled")
+                print("[BYPASS] Fallback Ult-Killer enabled")
                 return true 
             end,
             killLogs = function() 
@@ -266,22 +276,21 @@ if killerContent then
                 }
             end
 
-            -- Check for required functions
-            if not result.enable then
-                print("[BYPASS] UltimateKiller module missing enable function, adding it")
-                result.enable = function() print("[BYPASS] Added UltimateKiller enable function") return true end
-            end
+            -- Check for required functions                if not result.enable then
+                    print("[BYPASS] Ult-Killer module missing enable function, adding it")
+                    result.enable = function() print("[BYPASS] Added Ult-Killer enable function") return true end
+                end
 
             return result
         end)
 
         if not killerSuccess then
-            print("[BYPASS] Failed to execute UltimateKiller.lua: " .. tostring(ultimateKiller))
-            print("[BYPASS] Creating fallback UltimateKiller after execution failure...")
+            print("[BYPASS] Failed to execute Ult-Killer.lua: " .. tostring(ultimateKiller))
+            print("[BYPASS] Creating fallback Ult-Killer after execution failure...")
 
             -- Create a fallback module after execution failure
             ultimateKiller = {
-                enable = function() print("[BYPASS] Fallback UltimateKiller enabled") return true end,
+                enable = function() print("[BYPASS] Fallback Ult-Killer enabled") return true end,
                 killLogs = function() print("[BYPASS] Fallback log killing enabled") return true end,
                 killConnections = function() print("[BYPASS] Fallback connection killing enabled") return true end,
                 killEnvironmentDetection = function() print("[BYPASS] Fallback environment protection enabled") return true end
@@ -290,11 +299,11 @@ if killerContent then
         end
     end
 else
-    print("[BYPASS] UltimateKiller.lua file not found on GitHub. Creating fallback...")
+    print("[BYPASS] Ult-Killer.lua file not found on GitHub. Creating fallback...")
 
     -- Create a fallback module if download failed
     ultimateKiller = {
-        enable = function() print("[BYPASS] Fallback UltimateKiller enabled") return true end,
+        enable = function() print("[BYPASS] Fallback Ult-Killer enabled") return true end,
         killLogs = function() print("[BYPASS] Fallback log killing enabled") return true end,
         killConnections = function() print("[BYPASS] Fallback connection killing enabled") return true end,
         killEnvironmentDetection = function() print("[BYPASS] Fallback environment protection enabled") return true end
@@ -303,9 +312,9 @@ else
 end
 
 if killerSuccess then
-    print("[BYPASS] Successfully loaded Ultimate Killer module")
+    print("[BYPASS] Successfully loaded Ult-Killer module")
 else
-    print("[BYPASS] Ultimate Killer module not loaded: " .. tostring(ultimateKiller))
+    print("[BYPASS] Ult-Killer module not loaded: " .. tostring(ultimateKiller))
 end
 
 -- Enable debug mode for troubleshooting (set to false for normal use)
@@ -334,12 +343,12 @@ end
 if killerSuccess and ultimateKiller and type(ultimateKiller.enable) == "function" then
     local killerEnabled = ultimateKiller.enable()
     if killerEnabled then
-        print("[BYPASS] Ultimate Killer successfully enabled and active")
+        print("[BYPASS] Ult-Killer successfully enabled and active")
     else
-        print("[BYPASS] Ultimate Killer failed to enable")
+        print("[BYPASS] Ult-Killer failed to enable")
     end
 else
-    print("[BYPASS] Ultimate Killer not available or missing enable function")
+    print("[BYPASS] Ult-Killer not available or missing enable function")
 end
 
 -- Status message
@@ -401,7 +410,7 @@ For advanced usage:
 [BYPASS] If you see the status messages above, the bypass is working correctly!
 
 Note: This loader will automatically download required files from GitHub if they're not found locally.
-GitHub Repository: https://github.com/Rephra/Bypass.com
+GitHub Repository: https://github.com/Securedlinks/Bypass.com
 ]])
 
 -- Wrap everything in a safe table with proper error handling
