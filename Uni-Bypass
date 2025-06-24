@@ -1,1 +1,816 @@
+-- Universal Anti-Cheat Bypass
+-- This script combines multiple bypass techniques to avoid detection from various anti-cheat systems
 
+-- Safety checks for required functions
+if not hookmetamethod then
+    warn("[BYPASS] hookmetamethod not available - some bypass features will be disabled")
+end
+
+if not checkcaller then
+    warn("[BYPASS] checkcaller not available - using fallback detection")
+    checkcaller = function() return true end -- Fallback function
+end
+
+if not newcclosure then
+    warn("[BYPASS] newcclosure not available - using regular functions")
+    newcclosure = function(f) return f end -- Fallback function
+end
+
+if not getconnections then
+    warn("[BYPASS] getconnections not available - connection disabling will be disabled")
+end
+
+if not getgc then
+    warn("[BYPASS] getgc not available - memory scanning features will be disabled")
+end
+
+local BypassModule = {}
+local bypassEnabled = false
+local originalFunctions = {}
+local hookConnections = {}
+local debugMode = false -- Set to true for debug messages
+
+-- Utility function to safely print debug messages
+local function debugPrint(...)
+    if debugMode then
+        local oldPrint = print
+        local success, _ = pcall(function()
+            oldPrint("[BYPASS DEBUG]", ...)
+        end)
+    end
+    return nil
+end
+
+-- Utility function to add randomness to timing
+local function randomWait(min, max)
+    return min + (max - min) * math.random()
+end
+
+-- Safely get services with error handling
+local function safeGetService(serviceName)
+    local success, service = pcall(function()
+        return game:GetService(serviceName)
+    end)
+    
+    if success then
+        return service
+    else
+        debugPrint("Failed to get service:", serviceName)
+        return nil
+    end
+end
+
+-- Get important services
+local Players = safeGetService("Players")
+local ReplicatedStorage = safeGetService("ReplicatedStorage")
+local RunService = safeGetService("RunService")
+local LocalPlayer = Players and Players.LocalPlayer
+
+-- Spoof common properties that anti-cheats check
+local function setupPropertySpoofing()
+    if not hookmetamethod then
+        debugPrint("hookmetamethod not available, property spoofing disabled")
+        return
+    end
+    
+    -- Store original values
+    local originalProperties = {}
+    
+    -- Get original humanoid values if available
+    if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        local humanoid = LocalPlayer.Character.Humanoid
+        originalProperties.WalkSpeed = humanoid.WalkSpeed
+        originalProperties.JumpPower = humanoid.JumpPower
+        originalProperties.JumpHeight = humanoid.JumpHeight
+        originalProperties.Health = humanoid.Health
+        originalProperties.MaxHealth = humanoid.MaxHealth
+    else
+        -- Default values if not available
+        originalProperties.WalkSpeed = 16
+        originalProperties.JumpPower = 50
+        originalProperties.JumpHeight = 7.2
+        originalProperties.Health = 100
+        originalProperties.MaxHealth = 100
+    end
+    
+    -- Hook __index metamethod to spoof property values
+    local oldIndex
+    oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, property)
+        if not checkcaller() then
+            -- Only spoof humanoid properties
+            if typeof(self) == "Instance" and self:IsA("Humanoid") and 
+               LocalPlayer and LocalPlayer.Character and self:IsDescendantOf(LocalPlayer.Character) then
+                
+                -- Spoof common humanoid properties
+                if property == "WalkSpeed" then
+                    return originalProperties.WalkSpeed
+                elseif property == "JumpPower" then
+                    return originalProperties.JumpPower
+                elseif property == "JumpHeight" then
+                    return originalProperties.JumpHeight
+                elseif property == "Health" then
+                    return originalProperties.Health
+                elseif property == "MaxHealth" then
+                    return originalProperties.MaxHealth
+                end
+            end
+        end
+        
+        return oldIndex(self, property)
+    end))
+    
+    table.insert(originalFunctions, {name = "__index", original = oldIndex})
+    debugPrint("Property spoofing enabled")
+end
+
+-- List of suspicious remote names (case insensitive) - moved to module level
+local suspiciousRemoteNames = {
+    "detect", "cheat", "hack", "ban", "kick", "report", "log", "security",
+    "check", "verify", "validate", "anti", "iac", "ac", "exploit", "monitor",
+    "watch", "admin", "mod", "punish", "sanction", "warn", "track", "flag",
+    "trace", "scan", "secure", "protect", "guard", "shield", "defense"
+}
+
+-- Function to check if a remote name is suspicious - moved to module level
+local function isSuspiciousRemote(name)
+    if type(name) ~= "string" then
+        return false
+    end
+    local safeName = string.lower(tostring(name))
+    for _, suspiciousName in ipairs(suspiciousRemoteNames) do
+        if string.find(safeName, suspiciousName) then
+            return true
+        end
+    end
+    return false
+end
+
+-- Block remote events that might be used by anti-cheats
+local function blockAntiCheatRemotes()
+    if not hookmetamethod then
+        debugPrint("hookmetamethod not available, remote blocking disabled")
+        return
+    end
+    
+    -- Hook namecall method to intercept remote events
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        -- Check if this is a remote event that might be part of anti-cheat
+        if (method == "FireServer" or method == "InvokeServer") and typeof(self) == "Instance" and 
+           (self:IsA("RemoteEvent") or self:IsA("RemoteFunction")) then
+            
+            -- Block ALL remotes that might be related to anti-cheat
+            -- Either they're suspicious by name or they might be silent detection
+            if isSuspiciousRemote(self.Name) or string.lower(tostring(args[1])) == "check" or #args < 5 then
+                -- For FireServer, just return nil
+                if method == "FireServer" then
+                    return nil
+                -- For InvokeServer, return a success value
+                elseif method == "InvokeServer" then
+                    return true
+                end
+            end
+            
+            -- Specific check for IAC anti-cheat
+            if self.Name == "iac-respond" then
+                debugPrint("Blocked IAC anti-cheat remote")
+                return nil
+            end
+            
+            -- Add random delay to make automation look more human
+            if math.random() < 0.3 then
+                task.wait(randomWait(0.01, 0.05))
+            end
+        end
+        
+        return oldNamecall(self, ...)
+    end))
+    
+    table.insert(originalFunctions, {name = "__namecall", original = oldNamecall})
+    debugPrint("Remote event blocking enabled")
+end
+
+-- Hook debug functions to prevent detection
+local function hookDebugFunctions()
+    -- Hook print/warn functions to block all output
+    local oldPrint = print
+    print = newcclosure(function(...)
+        -- Block all print calls from game code
+        if not checkcaller() then
+            return nil
+        end
+        return oldPrint(...)
+    end)
+    table.insert(originalFunctions, {name = "print", original = oldPrint})
+
+    local oldWarn = warn
+    warn = newcclosure(function(...)
+        -- Block all warning calls from game code
+        if not checkcaller() then
+            return nil
+        end
+        return oldWarn(...)
+    end)
+    table.insert(originalFunctions, {name = "warn", original = oldWarn})
+
+    -- Hook debug.traceback to hide our scripts
+    if debug and debug.traceback then
+        local oldTraceback = debug.traceback
+        debug.traceback = newcclosure(function(...)
+            -- Completely neutralize tracebacks
+            if not checkcaller() then
+                return ""
+            end
+            local result = oldTraceback(...)
+            -- Remove references to our scripts from tracebacks
+            result = string.gsub(result, "universalbypass", "")
+            result = string.gsub(result, "bypass", "")
+            result = string.gsub(result, "stronghit", "")
+            return result
+        end)
+        table.insert(originalFunctions, {name = "traceback", original = oldTraceback})
+    end
+    
+    -- Hook debug.info to prevent detection
+    if debug and debug.info and newcclosure then
+        local oldInfo = debug.info
+        debug.info = newcclosure(function(...)
+            local args = {...}
+            -- Check if this is trying to get info about our scripts
+            if typeof(args[1]) == "function" then
+                local success, info = pcall(function() return oldInfo(args[1]) end)
+                if success and info and type(info) == "string" then
+                    if string.find(info, "bypass") or string.find(info, "stronghit") then
+                        return "game"
+                    end
+                end
+            end
+            return oldInfo(...)
+        end)
+        table.insert(originalFunctions, {name = "info", original = oldInfo})
+    end
+    
+    debugPrint("Debug function hooks enabled")
+end
+
+-- Disable anti-cheat connections
+local function disableAntiCheatConnections()
+    if not getconnections then
+        return
+    end
+
+    -- List of signals that might be used by anti-cheats or logging
+    local signals = {
+        game:GetService("ScriptContext").Error,
+        game:GetService("LogService").MessageOut,
+        game:GetService("RunService").Heartbeat,
+        game:GetService("RunService").Stepped,
+        game:GetService("RunService").RenderStepped,
+        game:GetService("UserInputService").InputBegan,
+        game:GetService("UserInputService").InputEnded,
+        game:GetService("UserInputService").InputChanged,
+        workspace:GetPropertyChangedSignal("Gravity"),
+        workspace.DescendantAdded,
+        game.ItemChanged,
+        game.ChildAdded,
+        LocalPlayer and LocalPlayer.Character and LocalPlayer.Character.DescendantAdded,
+        LocalPlayer and LocalPlayer.CharacterAdded,
+        LocalPlayer and LocalPlayer.Idled
+    }
+    
+    -- Disable connections for each signal
+    for _, signal in pairs(signals) do
+        if signal then
+            for _, connection in pairs(getconnections(signal)) do
+                connection:Disable()
+                table.insert(hookConnections, connection)
+            end
+        end
+    end
+    
+    -- Specifically look for anti-cheat remotes and disable their connections
+    if ReplicatedStorage then
+        for _, remote in pairs(ReplicatedStorage:GetDescendants()) do
+            if (remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction")) and 
+               isSuspiciousRemote(remote.Name) then
+                
+                if remote:IsA("RemoteEvent") then
+                    for _, connection in pairs(getconnections(remote.OnClientEvent)) do
+                        connection:Disable()
+                        table.insert(hookConnections, connection)
+                    end
+                end
+            end
+        end
+    end
+    
+    debugPrint("Anti-cheat connections disabled")
+end
+
+-- Find and hook anti-cheat functions in memory
+local function hookAntiCheatFunctions()
+    if not getgc then
+        debugPrint("getgc not available, anti-cheat function hooking disabled")
+        return
+    end
+
+    -- Hook getfenv to block environment inspection
+    if getfenv and newcclosure then
+        local oldGetfenv = getfenv
+        getfenv = newcclosure(function(f)
+            -- If called by game code, return a sanitized environment
+            if not checkcaller() then
+                local realEnv = oldGetfenv(f)
+                local fakeEnv = {}
+                -- Copy only safe values
+                for k, v in pairs(realEnv) do
+                    if type(k) == "string" and not (
+                       string.find(string.lower(k), "hook") or
+                       string.find(string.lower(k), "getgc") or
+                       string.find(string.lower(k), "bypass")) then
+                        fakeEnv[k] = v
+                    end
+                end
+                return fakeEnv
+            end
+            return oldGetfenv(f)
+        end)
+        table.insert(originalFunctions, {name = "getfenv", original = oldGetfenv})
+    else
+        debugPrint("getfenv or newcclosure not available, environment spoofing disabled")
+    end
+
+    -- Hook getgc if possible to hide our functions
+    if getgc ~= nil and hookfunction ~= nil then
+        local oldGetgc = getgc
+        local success, result = pcall(function()
+            return hookfunction(getgc, newcclosure(function(...)
+                if not checkcaller() then
+                    return {} -- Return empty table to anti-cheats
+                end
+
+                local success, results = pcall(oldGetgc, ...)
+                if not success then return {} end
+
+                local filtered = {}
+
+                for i, v in pairs(results) do
+                    -- Filter out our functions from gc results
+                    local isSafe = true
+                    if type(v) == "function" then
+                        -- Safe check for debug.info existence
+                        if debug and type(debug.info) == "function" then
+                            local success, info = pcall(function() return debug.info(v) end)
+                            if success and type(info) == "string" then
+                                if string.find(info, "bypass") or string.find(info, "cheat") then
+                                    isSafe = false
+                                end
+                            end
+                        end
+                    end
+                    if isSafe then
+                        table.insert(filtered, v)
+                    end
+                end
+
+                return filtered
+            end))
+        end)
+
+        if success then
+            getgc = result
+            table.insert(originalFunctions, {name = "getgc", original = oldGetgc})
+        else
+            debugPrint("Failed to hook getgc: " .. tostring(result))
+        end
+    end
+
+    -- Hook sensitive core functions to prevent logging/detection
+    local oldHttpPost = nil
+    if game and game.HttpPost then
+        oldHttpPost = game.HttpPost
+        game.HttpPost = newcclosure(function(...)
+            -- Block all HTTP logging attempts
+            return nil
+        end)
+        table.insert(originalFunctions, {name = "HttpPost", original = oldHttpPost})
+    end
+
+    -- Block table.concat which is often used in logging
+    local oldTableConcat = table.concat
+    table.concat = newcclosure(function(t, sep, i, j)
+        -- Check if this might be a log table
+        if type(t) == "table" then
+            for k, v in pairs(t) do
+                if type(v) == "string" and (
+                   string.find(string.lower(v), "cheat") or
+                   string.find(string.lower(v), "exploit") or
+                   string.find(string.lower(v), "hack") or
+                   string.find(string.lower(v), "script") or
+                   string.find(string.lower(v), "bypass")) then
+                    -- This is likely a log, return empty string
+                    return ""
+                end
+            end
+        end
+        return oldTableConcat(t, sep, i, j)
+    end)
+    table.insert(originalFunctions, {name = "table.concat", original = oldTableConcat})
+
+    local oldHttpGet = nil
+    if game and game.HttpGet then
+        oldHttpGet = game.HttpGet
+        game.HttpGet = newcclosure(function(self, url, ...)
+            -- Allow normal HTTP gets but block any with suspicious parameters
+            if string.find(string.lower(url), "cheat") or 
+               string.find(string.lower(url), "log") or 
+               string.find(string.lower(url), "report") then
+                return nil
+            end
+            return oldHttpGet(self, url, ...)
+        end)
+        table.insert(originalFunctions, {name = "HttpGet", original = oldHttpGet})
+    end
+    
+    -- Look for anti-cheat modules in the game
+    for _, v in pairs(getgc(true)) do
+        if type(v) == "table" then
+            -- Look for detection functions
+            for name, func in pairs(v) do
+                if type(func) == "function" and 
+                   (string.find(tostring(name):lower(), "detect") or 
+                    string.find(tostring(name):lower(), "check") or 
+                    string.find(tostring(name):lower(), "report") or
+                    string.find(tostring(name):lower(), "kick") or
+                    string.find(tostring(name):lower(), "ban")) then
+                    
+                    -- Hook the function to prevent detection
+                    local oldFunc = func
+                    v[name] = newcclosure(function(...)
+                        debugPrint("Blocked anti-cheat function:", name)
+                        -- For most detection functions, just return success
+                        return true
+                    end)
+                    table.insert(originalFunctions, {table = v, name = name, original = oldFunc})
+                end
+            end
+        end
+    end
+    
+    -- Adonis anti-cheat specific bypass
+    local Detected, Kill
+    
+    if getgc and type(getgc) == "function" then
+        local success, gc = pcall(function() return getgc(true) end)
+
+        if success and type(gc) == "table" then
+            for i, v in pairs(gc) do
+                if type(v) == "table" then
+                    -- Safely check for existence of keys
+                    local DetectFunc = nil
+                    local KillFunc = nil
+
+                    pcall(function() DetectFunc = rawget(v, "Detected") end)
+                    pcall(function() KillFunc = rawget(v, "Kill") end)
+
+                    -- Check if functions exist and hook them safely
+                    if type(DetectFunc) == "function" and not Detected and hookfunction then
+                        Detected = DetectFunc
+
+                        local success, Old = pcall(function()
+                            return hookfunction(Detected, function(Action, Info, NoCrash)
+                                debugPrint("Blocked Adonis detection:", Action, Info)
+                                return true
+                            end)
+                        end)
+
+                        if success then
+                            table.insert(originalFunctions, {name = "Adonis_Detected", original = Old})
+                        end
+                    end
+
+                    -- Variables and Process check
+                    local hasVariables = false
+                    local hasProcess = false
+
+                    pcall(function() hasVariables = rawget(v, "Variables") ~= nil end)
+                    pcall(function() hasProcess = rawget(v, "Process") ~= nil end)
+
+                    if hasVariables and hasProcess and type(KillFunc) == "function" and not Kill and hookfunction then
+                        Kill = KillFunc
+
+                        local success, Old = pcall(function()
+                            return hookfunction(Kill, function(Info)
+                                debugPrint("Blocked Adonis kill:", Info)
+                                return
+                            end)
+                        end)
+
+                        if success then
+                            table.insert(originalFunctions, {name = "Adonis_Kill", original = Old})
+                        end
+                    end
+                end
+            end
+        else
+            debugPrint("Failed to get gc objects")
+        end
+    end
+    
+    -- Adonis kick bypass with error handling
+    if getgc and type(getgc) == "function" then
+        local success, gc = pcall(function() return getgc(true) end)
+
+        if success and type(gc) == "table" then
+            for k, v in pairs(gc) do
+                -- Only process tables
+                if type(v) == "table" then
+                    -- Safely check for existence of indexInstance
+                    local hasIndexInstance = false
+                    local indexInstance = nil
+
+                    pcall(function() 
+                        indexInstance = rawget(v, "indexInstance")
+                        hasIndexInstance = (indexInstance ~= nil)
+                    end)
+
+                    -- Check if indexInstance is a table and has the right value
+                    if hasIndexInstance and type(indexInstance) == "table" and 
+                       type(indexInstance[1]) == "string" and indexInstance[1] == "kick" then
+
+                        -- Safely modify the table
+                        pcall(function()
+                            v.tvk = {"kick", function() return game.Workspace:WaitForChild("") end}
+                            debugPrint("Blocked Adonis kick function")
+                        end)
+                    end
+                end
+            end
+        end
+    end
+    
+    debugPrint("Anti-cheat function hooking enabled")
+end
+
+-- Prevent GUI detection
+local function preventGUIDetection()
+    if not hookmetamethod then
+        debugPrint("hookmetamethod not available, GUI detection prevention disabled")
+        return
+    end
+    
+    -- Hook GetDescendants to hide our GUIs
+    local oldGetDescendants
+    oldGetDescendants = hookfunction(game.GetDescendants, newcclosure(function(self)
+        local results = oldGetDescendants(self)
+        
+        -- If this is checking PlayerGui, filter out our GUIs
+        if self == LocalPlayer and LocalPlayer.PlayerGui then
+            local filtered = {}
+            for _, v in ipairs(results) do
+                if v:IsA("ScreenGui") then
+                    -- Check if this is one of our GUIs
+                    if v.Name:find("Bypass") or v.Name:find("StrongHit") then
+                        -- Skip this GUI
+                    else
+                        table.insert(filtered, v)
+                    end
+                else
+                    table.insert(filtered, v)
+                end
+            end
+            return filtered
+        end
+        
+        return results
+    end))
+    
+    table.insert(originalFunctions, {name = "GetDescendants", original = oldGetDescendants})
+    debugPrint("GUI detection prevention enabled")
+end
+
+-- Monitor for new anti-cheat scripts and intercept loading
+local function monitorNewScripts()
+    -- Hook loadstring to prevent anti-cheat loading
+    if loadstring then
+        local oldLoadstring = loadstring
+        loadstring = newcclosure(function(code, chunkname)
+            -- Check if this is anti-cheat code
+            if type(code) == "string" and (
+               string.find(string.lower(code), "anti") or 
+               string.find(string.lower(code), "cheat") or 
+               string.find(string.lower(code), "detect") or 
+               string.find(string.lower(code), "ban") or
+               string.find(string.lower(code), "kick") or
+               string.find(string.lower(code), "report") or
+               string.find(string.lower(code), "log")) then
+                -- Return a dummy function that does nothing
+                return function() return true end
+            end
+            return oldLoadstring(code, chunkname)
+        end)
+        table.insert(originalFunctions, {name = "loadstring", original = oldLoadstring})
+    end
+
+    local connection = game.DescendantAdded:Connect(function(descendant)
+        if descendant:IsA("Script") or descendant:IsA("LocalScript") then
+            local lowerName = string.lower(descendant.Name)
+            if string.find(lowerName, "anti") or 
+               string.find(lowerName, "cheat") or 
+               string.find(lowerName, "detect") or 
+               string.find(lowerName, "security") or
+               string.find(lowerName, "log") or
+               string.find(lowerName, "kick") or
+               string.find(lowerName, "ban") then
+
+                -- Completely disable all anti-cheat scripts
+                task.defer(function()
+                    pcall(function()
+                        -- Try multiple methods to disable
+                        descendant.Disabled = true
+
+                        -- Try to replace script source if possible
+                        if decompile and hookfunction then
+                            -- Attempt to replace script content with empty function
+                            local success = pcall(function()
+                                local fakeScript = "return function() return true end"
+                                hookfunction(decompile(descendant), function()
+                                    return fakeScript
+                                end)
+                            end)
+                        end
+                    end)
+                end)
+            end
+        end
+    end)
+    
+    table.insert(hookConnections, connection)
+    debugPrint("New script monitoring enabled")
+end
+
+-- Safer input simulation that's harder to detect
+function BypassModule.simulateInput(keyCode, hold)
+    -- Add randomness to timing to appear more human-like
+    if math.random() < 0.7 then
+        task.wait(randomWait(0.01, 0.08))
+    end
+    
+    -- Try different methods of input simulation with error handling
+    local success = pcall(function()
+        -- Method 1: Use UserInputService events (less detectable)
+        local UIS = game:GetService("UserInputService")
+        local inputObject = {
+            KeyCode = keyCode,
+            UserInputType = Enum.UserInputType.Keyboard,
+            UserInputState = Enum.UserInputState.Begin
+        }
+        UIS.InputBegan:Fire(inputObject)
+        
+        if hold then
+            task.wait(randomWait(0.05, 0.15))
+        else
+            task.wait(randomWait(0.02, 0.06))
+        end
+        
+        inputObject.UserInputState = Enum.UserInputState.End
+        UIS.InputEnded:Fire(inputObject)
+    end)
+    
+    -- Fallback to VirtualInputManager if needed
+    if not success then
+        pcall(function()
+            local VIM = game:GetService("VirtualInputManager")
+            VIM:SendKeyEvent(true, keyCode, false, game)
+            
+            if hold then
+                task.wait(randomWait(0.05, 0.15))
+            else
+                task.wait(randomWait(0.02, 0.06))
+            end
+            
+            VIM:SendKeyEvent(false, keyCode, false, game)
+        end)
+    end
+end
+
+-- Enable the bypass
+function BypassModule.enable()
+    if bypassEnabled then return end
+    
+    bypassEnabled = true
+    debugPrint("Enabling universal anti-cheat bypass...")
+    
+    -- Set up all bypass components
+    setupPropertySpoofing()
+    blockAntiCheatRemotes()
+    hookDebugFunctions()
+    disableAntiCheatConnections()
+    hookAntiCheatFunctions()
+    preventGUIDetection()
+    monitorNewScripts()
+    
+    -- Set up character added connection to reapply bypasses
+    if LocalPlayer then
+        local connection = LocalPlayer.CharacterAdded:Connect(function()
+            task.wait(1) -- Wait for character to fully load
+            setupPropertySpoofing()
+            disableAntiCheatConnections()
+        end)
+        table.insert(hookConnections, connection)
+    end
+    
+    -- No debug prints for stealth
+    return true
+end
+
+-- Disable the bypass
+function BypassModule.disable()
+    if not bypassEnabled then return end
+    
+    -- Restore original functions
+    for _, func in pairs(originalFunctions) do
+        if func.table then
+            func.table[func.name] = func.original
+        else
+            if func.name == "__namecall" or func.name == "__index" then
+                hookmetamethod(game, func.name, func.original)
+            else
+                getfenv(0)[func.name] = func.original
+            end
+        end
+    end
+    
+    -- Disconnect all connections
+    for _, connection in pairs(hookConnections) do
+        if typeof(connection) == "RBXScriptConnection" then
+            connection:Disconnect()
+        end
+    end
+    
+    originalFunctions = {}
+    hookConnections = {}
+    bypassEnabled = false
+    
+    -- No debug prints for stealth
+    return true
+end
+
+-- Set debug mode
+function BypassModule.setDebugMode(enabled)
+    debugMode = enabled
+    debugPrint("Debug mode set to:", enabled)
+    return true
+end
+
+-- Clean memory traces of our script
+local function cleanMemoryTraces()
+    -- Force garbage collection to remove traces
+    for i = 1, 5 do
+        collectgarbage("collect")
+    end
+
+    -- Hook saveinstance to prevent game state saving
+    if saveinstance then
+        local oldSaveInstance = saveinstance
+        saveinstance = newcclosure(function(...)
+            -- Block saveinstance calls that might capture our modifications
+            return nil
+        end)
+        table.insert(originalFunctions, {name = "saveinstance", original = oldSaveInstance})
+    end
+
+    -- Clean up script traces in _G
+    for k, v in pairs(_G) do
+        if string.find(string.lower(tostring(k)), "bypass") or 
+           string.find(string.lower(tostring(k)), "cheat") or
+           string.find(string.lower(tostring(k)), "hook") then
+            _G[k] = nil
+        end
+    end
+
+    -- Clean up shared table if it exists
+    if shared then
+        for k, v in pairs(shared) do
+            if string.find(string.lower(tostring(k)), "bypass") or 
+               string.find(string.lower(tostring(k)), "cheat") or
+               string.find(string.lower(tostring(k)), "hook") then
+                shared[k] = nil
+            end
+        end
+    end
+ end
+
+-- Add memory cleaning to enable function
+local originalEnable = BypassModule.enable
+BypassModule.enable = function()
+    local result = originalEnable()
+    cleanMemoryTraces()
+    return result
+end
+
+-- Return the module
+return BypassModule
