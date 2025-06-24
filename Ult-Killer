@@ -1,1 +1,347 @@
+-- Ultimate Anti-Detection and Anti-Logging Module
+-- This module provides the most aggressive methods to prevent any form of detection or logging
 
+-- Safety checks for required functions
+if not hookfunction then
+    warn("[ULTIMATEKILLER] hookfunction not available - some features will be disabled")
+    hookfunction = function() return false end -- Fallback function
+end
+
+if not checkcaller then
+    warn("[ULTIMATEKILLER] checkcaller not available - using fallback")
+    checkcaller = function() return true end -- Fallback function
+end
+
+if not getconnections then
+    warn("[ULTIMATEKILLER] getconnections not available - connection killing disabled")
+    getconnections = function() return {} end -- Fallback function
+end
+
+local UltimateKiller = {}
+
+-- Hook output/logging functions
+function UltimateKiller.killLogs()
+    -- Check if hookfunction exists
+    if not hookfunction or type(hookfunction) ~= "function" then
+        return false
+    end
+
+    -- Create a dummy function that does nothing
+    local nullFunction = function(...) return nil end
+
+    -- Safely hook all output functions
+    local hookSafely = function(func, replacement)
+        if type(func) == "function" then
+            pcall(function() hookfunction(func, replacement) end)
+        end
+    end
+
+    -- Hook all output functions with error handling
+    hookSafely(print, nullFunction)
+    hookSafely(warn, nullFunction)
+    hookSafely(error, nullFunction)
+    if rconsoleprint then hookSafely(rconsoleprint, nullFunction) end
+    if rconsolewarn then hookSafely(rconsolewarn, nullFunction) end
+    if rconsoleerr then hookSafely(rconsoleerr, nullFunction) end
+    if printconsole then hookSafely(printconsole, nullFunction) end
+
+    -- Hook table functions used in logging with error handling
+    local tableConcat = table.concat
+    pcall(function()
+        hookfunction(table.concat, function(t, sep, i, j) 
+            -- Safe check for table type
+            if type(t) == "table" then
+                local hasExploitString = false
+
+                -- Safely iterate through table
+                pcall(function()
+                    for k, v in pairs(t) do
+                        if type(v) == "string" then
+                            local success, result = pcall(function()
+                                return string.find(string.lower(tostring(v)), "exploit")
+                            end)
+
+                            if success and result then
+                                hasExploitString = true
+                            end
+                        end
+                    end
+                end)
+
+                if hasExploitString then
+                    return ""
+                end
+            end
+
+            -- Safe fallback to original behavior or empty string
+            local success, result = pcall(function()
+                return tableConcat(t, sep, i, j)
+            end)
+
+            if success then
+                return result
+            else
+                return ""
+            end
+        end)
+    end)
+
+    -- Block HTTP requests that might be logs with error handling
+    if game then
+        -- Safely check if HttpPost exists and hook it
+        pcall(function()
+            if type(game.HttpPost) == "function" then
+                hookfunction(game.HttpPost, nullFunction)
+            end
+        end)
+
+        -- Safely check if HttpGet exists and hook it
+        pcall(function()
+            if type(game.HttpGet) == "function" then
+                local oldHttpGet = game.HttpGet
+                hookfunction(game.HttpGet, function(self, url, ...)
+                    -- Safe string operations
+                    local isLogUrl = false
+
+                    pcall(function()
+                        if type(url) == "string" then
+                            local lowerUrl = string.lower(url)
+                            isLogUrl = string.find(lowerUrl, "log") or string.find(lowerUrl, "report")
+                        end
+                    end)
+
+                    if isLogUrl then
+                        return nil
+                    end
+
+                    -- Try to call original or return empty string
+                    local success, result = pcall(function()
+                        return oldHttpGet(self, url, ...)
+                    end)
+
+                    if success then
+                        return result
+                    else
+                        return ""
+                    end
+                end)
+            end
+        end)
+    end
+
+    -- Block any pcalls/xpcalls to prevent crash logs with error handling
+    if pcall and checkcaller then
+        local oldPcall = pcall
+        pcall(function()
+            hookfunction(pcall, function(f, ...)
+                -- Safe check for checkcaller
+                local isCaller = false
+                pcall(function() isCaller = checkcaller() end)
+
+                if not isCaller then
+                    return true, nil -- Always succeed but return nil for any game pcalls
+                end
+
+                -- Safe call to original
+                return oldPcall(f, ...)
+            end)
+        end)
+    end
+
+    -- Block error logging with error handling
+    if xpcall and checkcaller then
+        local oldXpcall = xpcall
+        pcall(function()
+            hookfunction(xpcall, function(f, msgh, ...)
+                -- Safe check for checkcaller
+                local isCaller = false
+                pcall(function() isCaller = checkcaller() end)
+
+                if not isCaller then
+                    return true -- Always succeed
+                end
+
+                -- Safe call to original with empty error handler
+                return oldXpcall(f, function() return "" end, ...)
+            end)
+        end)
+    end
+
+    return true
+end
+
+-- Kill all event connections that might be used for detection
+function UltimateKiller.killConnections()
+    if not getconnections then
+        return false
+    end
+
+    -- Services to check
+    local services = {
+        game:GetService("LogService"),
+        game:GetService("ScriptContext"),
+        game:GetService("Players").LocalPlayer,
+        game:GetService("RunService"),
+        game:GetService("UserInputService"),
+        workspace
+    }
+
+    -- Events to check in each service
+    local events = {
+        "MessageOut",
+        "Error",
+        "ChildAdded",
+        "DescendantAdded",
+        "ItemChanged",
+        "Heartbeat",
+        "Stepped",
+        "RenderStepped",
+        "InputBegan",
+        "InputChanged",
+        "InputEnded",
+        "Idled",
+        "Changed"
+    }
+
+    -- Disable all connections on these events
+    for _, service in pairs(services) do
+        for _, event in pairs(events) do
+            pcall(function()
+                for _, connection in pairs(getconnections(service[event])) do
+                    connection:Disable()
+                end
+            end)
+        end
+
+        -- Also disable property changed signals
+        pcall(function()
+            for _, connection in pairs(getconnections(service:GetPropertyChangedSignal("Name"))) do
+                connection:Disable()
+            end
+        end)
+    end
+
+    -- Disable all remote event connections too
+    pcall(function()
+        for _, descendant in pairs(game:GetService("ReplicatedStorage"):GetDescendants()) do
+            if descendant:IsA("RemoteEvent") then
+                for _, connection in pairs(getconnections(descendant.OnClientEvent)) do
+                    connection:Disable()
+                end
+            end
+        end
+    end)
+
+    return true
+end
+
+-- Override environment detection
+function UltimateKiller.killEnvironmentDetection()
+    -- Hook environment function
+    hookfunction(getfenv, function(f)
+        if not checkcaller() then
+            local realEnv = getfenv(f)
+            local fakeEnv = {}
+            -- Only copy safe functions
+            for k, v in pairs(realEnv) do
+                if type(k) == "string" and not string.find(string.lower(k), "hook") then
+                    fakeEnv[k] = v
+                end
+            end
+            return fakeEnv
+        end
+        return getfenv(f)
+    end)
+
+    -- If identity functions exist, spoof those too
+    if getidentity then
+        hookfunction(getidentity, function()
+            if not checkcaller() then
+                return 2 -- Pretend to be running as game code
+            end
+            return getidentity()
+        end)
+    end
+
+    if getthreadidentity then
+        hookfunction(getthreadidentity, function()
+            if not checkcaller() then
+                return 2 -- Pretend to be running as game code
+            end
+            return getthreadidentity()
+        end)
+    end
+
+    return true
+end
+
+-- Enable everything
+function UltimateKiller.enable()
+    UltimateKiller.killLogs()
+    UltimateKiller.killConnections()
+    UltimateKiller.killEnvironmentDetection()
+
+    -- Force garbage collection to clean traces
+    for i = 1, 5 do
+        collectgarbage("collect")
+    end
+
+    -- Clear global tables of any evidence with enhanced error handling
+    local tables = {_G}
+
+    -- Safely add shared if it exists
+    pcall(function() 
+        if shared then 
+            table.insert(tables, shared) 
+        end 
+    end)
+
+    -- Safely add getrenv() if it exists
+    pcall(function() 
+        if getrenv and type(getrenv) == "function" then 
+            local env = getrenv()
+            if type(env) == "table" then
+                table.insert(tables, env) 
+            end
+        end 
+    end)
+
+    -- Process each table safely
+    for _, tbl in pairs(tables) do
+        pcall(function()
+            if type(tbl) == "table" then
+                local keysToRemove = {}
+
+                -- First collect keys to remove (safer than modifying during iteration)
+                pcall(function()
+                    for k, v in pairs(tbl) do
+                        if type(k) == "string" then
+                            local suspicious = false
+
+                            pcall(function()
+                                local lowerKey = string.lower(k)
+                                suspicious = string.find(lowerKey, "log") or
+                                            string.find(lowerKey, "anti") or
+                                            string.find(lowerKey, "exploit") or
+                                            string.find(lowerKey, "cheat")
+                            end)
+
+                            if suspicious then
+                                table.insert(keysToRemove, k)
+                            end
+                        end
+                    end
+                end)
+
+                -- Then remove the keys
+                for _, k in ipairs(keysToRemove) do
+                    pcall(function() tbl[k] = nil end)
+                end
+            end
+        end)
+    end
+
+    return true
+end
+
+return UltimateKiller
